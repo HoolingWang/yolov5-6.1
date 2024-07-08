@@ -74,34 +74,34 @@ from utils.torch_utils import select_device, smart_inference_mode
 @smart_inference_mode()
 def run(
     # 载入参数
-    weights=ROOT / "yolov5s.pt",  # model path or triton URL
-    source=ROOT / "data/images",  # file/dir/URL/glob/screen/0(webcam)
-    data=ROOT / "data/coco128.yaml",  # dataset.yaml path
-    imgsz=(640, 640),  # inference size (height, width)
-    conf_thres=0.25,  # confidence threshold
-    iou_thres=0.45,  # NMS IOU threshold
-    max_det=1000,  # maximum detections per image
-    device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-    view_img=False,  # show results
-    save_txt=False,  # save results to *.txt
-    save_csv=False,  # save results in CSV format
-    save_conf=False,  # save confidences in --save-txt labels
-    save_crop=False,  # save cropped prediction boxes
-    nosave=False,  # do not save images/videos
-    classes=None,  # filter by class: --class 0, or --class 0 2 3
-    agnostic_nms=False,  # class-agnostic NMS
-    augment=False,  # augmented inference
-    visualize=False,  # visualize features
-    update=False,  # update all models
-    project=ROOT / "runs/detect",  # save results to project/name
-    name="exp",  # save results to project/name
-    exist_ok=False,  # existing project/name ok, do not increment
-    line_thickness=3,  # bounding box thickness (pixels)
-    hide_labels=False,  # hide labels
-    hide_conf=False,  # hide confidences
-    half=False,  # use FP16 half-precision inference
-    dnn=False,  # use OpenCV DNN for ONNX inference
-    vid_stride=1,  # video frame-rate stride
+    weights=ROOT / "yolov5s.pt",  # model path or triton URL   权重文件路径
+    source=ROOT / "data/images",  # file/dir/URL/glob/screen/0(webcam)   输入图像的路径
+    data=ROOT / "data/coco128.yaml",  # dataset.yaml path   数据集的配置文件
+    imgsz=(640, 640),  # inference size (height, width)   
+    conf_thres=0.25,  # confidence threshold   置信度阈值
+    iou_thres=0.45,  # NMS IOU threshold   配极大值抑制的iou阈值
+    max_det=1000,  # maximum detections per image   每张图像的最大检测框数量
+    device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu   设备
+    view_img=False,  # show results   是否打印检测结果图像
+    save_txt=False,  # save results to *.txt   是否将检测结果保存为txt文件
+    save_csv=False,  # save results in CSV format   是否保存为csv格式
+    save_conf=False,  # save confidences in --save-txt labels   是否在文本文件包含置信度信息
+    save_crop=False,  # save cropped prediction boxes   是否将检测出目标的区域保存为图像文件
+    nosave=False,  # do not save images/videos   是否保存图像或者视频
+    classes=None,  # filter by class: --class 0, or --class 0 2 3   指定要检测的类别（一类或多类）
+    agnostic_nms=False,  # class-agnostic NMS   是否使用类别无关的非极大值抑制
+    augment=False,  # augmented inference   是否使用数据增强的方式进行目标检测
+    visualize=False,  # visualize features   是否可视化模型中的特征图
+    update=False,  # update all models   是否自动更新模型权重文件
+    project=ROOT / "runs/detect",  # save results to project/name   结果保存文件夹
+    name="exp",  # save results to project/name   结果保存文件夹（与前者拼接）
+    exist_ok=False,  # existing project/name ok, do not increment   是否覆盖保存结果的文件夹
+    line_thickness=3,  # bounding box thickness (pixels)   检测框线条宽度
+    hide_labels=False,  # hide labels   是否隐藏标签信息
+    hide_conf=False,  # hide confidences   是否隐藏置信度
+    half=False,  # use FP16 half-precision inference   是否使用FP16半精度训练
+    dnn=False,  # use OpenCV DNN for ONNX inference   是否使用opencv的dnn作为onnx的后端
+    vid_stride=1,  # video frame-rate stride   视频流检测步长（间隔帧数）
 ):
     ### 初始化配置
     # 输入路径转化为
@@ -142,7 +142,7 @@ def run(
     # '''
     imgsz = check_img_size(imgsz, s=stride)  # check image size 将输入尺寸转化为可被stride整除的尺寸
 
-    # Dataloader
+    # Dataloader   加载数据
     bs = 1  # batch_size
     if webcam:   # 视频信息
         view_img = check_imshow(warn=True)   # check_imshow检查当前环境是否支持图像显示功能。
@@ -164,23 +164,33 @@ def run(
     # Run inference
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup 加载模型输入一张空图像初始化模型
     seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
-    # '''
-    # seen：用于记录进程，当前有多少图片被处理
-    # dt：存储每一步的耗时
-    # '''
+    '''
+    seen：用于记录进程，当前有多少图片被处理
+    windows:用于打印图像的窗口数量
+    dt：存储每一步的耗时
+    '''
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:   # 记录图像预处理的时间
-            im = torch.from_numpy(im).to(model.device)
-            im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
+            im = torch.from_numpy(im).to(model.device)   #nunpy->torch
+            im = im.half() if model.fp16 else im.float()  # uint8 to im.half()->fp16(2字节)/om.float()->32(4字节)
             im /= 255  # 0 - 255 to 0.0 - 1.0
             if len(im.shape) == 3:
                 im = im[None]  # expand for batch dim
-            if model.xml and im.shape[0] > 1:
+                '''
+                im[None]是一种使用None方法来增加向量维度的方法，相当于im.unsqueeze(0), im.view(1, *im.shape)
+                [C, H, W] -> [B, C, H, W]
+                '''
+            if model.xml and im.shape[0] > 1: 
                 ims = torch.chunk(im, im.shape[0], 0)
+                '''
+                torch.chunk 是 PyTorch 中的一个函数，用于沿指定维度将张量分割成多个子张量。
+                torch.chunk(im, im.shape[0], 0) 将 im 沿第0维（批次维度）分割成 im.shape[0] 个子张量。
+                这意味着如果 im 的形状是 (N, C, H, W)，则会得到 N 个形状为 (1, C, H, W) 的子张量。
+                '''
 
         # Inference
         with dt[1]:   # 推理时间
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False 
             if model.xml and im.shape[0] > 1:
                 pred = None
                 for image in ims:
@@ -195,7 +205,7 @@ def run(
         with dt[2]:   # 非极大值抑制时间
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
-        # Second-stage classifier (optional)
+        # Second-stage classifier (optional)   二阶段分类器
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
 
         # Define the path for the CSV file

@@ -437,6 +437,7 @@ class Concat(nn.Module):
 
 class DetectMultiBackend(nn.Module):
     # YOLOv5 MultiBackend class for python inference on various backends
+    # YOLOv5 多后端推理类，用于在各种推理框架上进行推理
     def __init__(self, weights="yolov5s.pt", device=torch.device("cpu"), dnn=False, data=None, fp16=False, fuse=True):
         """Initializes DetectMultiBackend with support for various inference backends, including PyTorch and ONNX."""
         #   PyTorch:              weights = *.pt
@@ -454,12 +455,17 @@ class DetectMultiBackend(nn.Module):
         from models.experimental import attempt_download, attempt_load  # scoped to avoid circular import
 
         super().__init__()
+        # 将weight处理为字符串，如果weight是一个列表则取第一个，单个权重文件则不变
         w = str(weights[0] if isinstance(weights, list) else weights)
+        #根据权重文件的扩展名，获取模型的架构，输出：True False False False False False False False False False False False False
         pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle, triton = self._model_type(w)
-        fp16 &= pt or jit or onnx or engine or triton  # FP16
-        nhwc = coreml or saved_model or pb or tflite or edgetpu  # BHWC formats (vs torch BCWH)
-        stride = 32  # default stride
+        # 根据烈性判断是否需要进行半精度训练
+        fp16 &= pt or jit or onnx or engine or triton  # 只有在这些架构中才可以使用半精度训练# FP16
+        # 确定是否使用NHWC数据格式，这取决于模型类型
+        nhwc = coreml or saved_model or pb or tflite or edgetpu  # 是否使用BHWC形式 # BHWC formats (vs torch BCWH)
+        stride = 32  # default stride  设置默认的模型stride
         cuda = torch.cuda.is_available() and device.type != "cpu"  # use CUDA
+        # 如果不是PyTorch或Triton模型，尝试下载模型文件
         if not (pt or triton):
             w = attempt_download(w)  # download if not local
 
@@ -656,6 +662,10 @@ class DetectMultiBackend(nn.Module):
 
     def forward(self, im, augment=False, visualize=False):
         """Performs YOLOv5 inference on input images with options for augmentation and visualization."""
+        # 定义模型的前向传播函数，根据不同后端进行不同的处理
+        # 获取输入图像的尺寸信息，并根据需要转换数据类型和格式
+        # 根据模型类型执行对应的推断操作，处理不同后端的推断逻辑
+        # 返回推断结果，结果可能是单个张量或张量列表
         b, ch, h, w = im.shape  # batch, channel, height, width
         if self.fp16 and im.dtype != torch.float16:
             im = im.half()  # to FP16

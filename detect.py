@@ -136,30 +136,27 @@ def run(
     # 在参数配置部分选择你的设备,
     device = select_device(device)
     # 模型加载，输入信息包含权重文件，设备信息，详情参考common文件DetectMultiBackend函数的实现
-    model = DetectMultiBackend(
-        weights, device=device, dnn=dnn, data=data, fp16=half)
+    model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
     stride, names, pt = model.stride, model.names, model.pt
     # '''
     # stride:推理用到的步长，默认32，大步长节省空间提高效率，小步长对于小目标检测性能有帮助，模型边界更加细致
     # name:保存推理结果名的列表
     # pt：是否加载pytorch模型
     # '''
-    imgsz = check_img_size(
-        imgsz, s=stride)  # check image size 将输入尺寸转化为可被stride整除的尺寸
+    imgsz = check_img_size(imgsz, s=stride)  # check image size 将输入尺寸转化为可被stride整除的尺寸
 
     # Dataloader   加载数据
     bs = 1  # batch_size
     if webcam:   # 视频信息
         view_img = check_imshow(warn=True)   # check_imshow检查当前环境是否支持图像显示功能。
         # LoadStreams 类用于处理视频流数据，返回格式为源、处理后的图像、原始图像等。
-        dataset = LoadStreams(source, img_size=imgsz,
-                              stride=stride, auto=pt, vid_stride=vid_stride)
-        # '''
-        # source: 输入数据源；
-        # image_size: 图片识别前被缩放的大小；
-        # stride: 识别时的步长；
-        # atuo: 是否将图像填充为正方形，True表示不需要。
-        # '''
+        dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
+        '''
+        source: 输入数据源；
+        image_size: 图片识别前被缩放的大小；
+        stride: 识别时的步长；
+        atuo: 是否将图像填充为正方形，True表示不需要。
+        '''
         bs = len(dataset)  # batch_size批大小
     elif screenshot:
         dataset = LoadScreenshots(
@@ -173,12 +170,11 @@ def run(
     # Run inference 开始推理
     # warmup 加载模型输入一张空图像初始化模型
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))
-    seen, windows, dt = 0, [], (Profile(device=device), Profile(
-        device=device), Profile(device=device))
-    # '''
-    # seen：用于记录进程，当前有多少图片被处理
-    # dt：存储每一步的耗时
-    # '''
+    seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
+    '''
+    seen：用于记录进程，当前有多少图片被处理
+    dt：存储每一步的耗时
+    '''
     for path, im, im0s, vid_cap, s in dataset:
         '''
         在dataset中，每次迭代返回的值为self.source, img, img0, None, ''
@@ -265,27 +261,42 @@ def run(
             '''
             seen += 1  # 计数功能
             if webcam:  # batch_size >= 1
+                # 如果输入源是wecam则batch_size >= 1，取出dataset中的一张图片
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
-                s += f"{i}: "
+                s += f"{i}: "  # s后面拼接一个字符串i
             else:
                 p, im0, frame = path, im0s.copy(), getattr(dataset, "frame", 0)
+                '''
+                LoadImage流水读取文本文件中的照片或者视频 batch_size = 1
+                p: 当前图片/视频的绝对路径
+                s: 输出信息 原始为''
+                im0: 原始图片 letter + pad 之前的图片
+                frame: 视频六，此次取得是第几张图片
+                '''
 
             p = Path(p)  # to Path
+            # 图片或视频的保存路径
             save_path = str(save_dir / p.name)  # im.jpg
+            # 保存坐标框的txt文件路径
             txt_path = str(save_dir / "labels" / p.stem) + \
                 ("" if dataset.mode == "image" else f"_{frame}")  # im.txt
-            s += "%gx%g " % im.shape[2:]  # print string
+            # 设置输出图片信息。图片shape（w， h）
+            s += "%gx%g " % im.shape[2:]  # print string   %g 是一种格式化浮点数的方式
             # normalization gain whwh
+            # 原图的宽和高
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]
+            # 保存截图。如果save_crop为True则保存检测框的截图
             imc = im0.copy() if save_crop else im0  # for save_crop
-            annotator = Annotator(
-                im0, line_width=line_thickness, example=str(names))
-            if len(det):
+            # 实例化一个绘图的类，类中预先存储了原图、线条宽度、类名
+            annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            # 判断有无检测框
+            if len(det):   # 单独处理每个检测框
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_boxes(
-                    im.shape[2:], det[:, :4], im0.shape).round()
+                # 将预测框的尺寸调整为原图大小（因为原图在检测时可能会被调整大小）
+                det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
+                # 打印检测到的类别数量
                 for c in det[:, 5].unique():
                     n = (det[:, 5] == c).sum()  # detections per class
                     # add to string
@@ -371,61 +382,34 @@ def run(
 def parse_opt():
     """Parses command-line arguments for YOLOv5 detection, setting inference options and model configurations."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", nargs="+", type=str,
-                        default=ROOT / "yolov5s.pt", help="model path or triton URL")
-    parser.add_argument("--source", type=str, default=ROOT /
-                        "data/images", help="file/dir/URL/glob/screen/0(webcam)")
-    parser.add_argument("--data", type=str, default=ROOT /
-                        "data/coco128.yaml", help="(optional) dataset.yaml path")
-    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+",
-                        type=int, default=[640], help="inference size h,w")
-    parser.add_argument("--conf-thres", type=float,
-                        default=0.25, help="confidence threshold")
-    parser.add_argument("--iou-thres", type=float,
-                        default=0.45, help="NMS IoU threshold")
-    parser.add_argument("--max-det", type=int, default=1000,
-                        help="maximum detections per image")
-    parser.add_argument("--device", default="",
-                        help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    parser.add_argument("--weights", nargs="+", type=str, default=ROOT/"yolov5s.pt", help="model path or triton URL")
+    parser.add_argument("--source", type=str, default=ROOT/"data/images", help="file/dir/URL/glob/screen/0(webcam)")  #ROOT/"data/images"
+    parser.add_argument("--data", type=str, default=ROOT/"data/coco128.yaml", help="(optional) dataset.yaml path")
+    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
+    parser.add_argument("--conf-thres", type=float, default=0.25, help="confidence threshold")
+    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--max-det", type=int, default=1000, help="maximum detections per image")
+    parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--view-img", action="store_true", help="show results")
-    parser.add_argument("--save-txt", action="store_true",
-                        help="save results to *.txt")
-    parser.add_argument("--save-csv", action="store_true",
-                        help="save results in CSV format")
-    parser.add_argument("--save-conf", action="store_true",
-                        help="save confidences in --save-txt labels")
-    parser.add_argument("--save-crop", action="store_true",
-                        help="save cropped prediction boxes")
-    parser.add_argument("--nosave", action="store_true",
-                        help="do not save images/videos")
-    parser.add_argument("--classes", nargs="+", type=int,
-                        help="filter by class: --classes 0, or --classes 0 2 3")
-    parser.add_argument("--agnostic-nms", action="store_true",
-                        help="class-agnostic NMS")
-    parser.add_argument("--augment", action="store_true",
-                        help="augmented inference")
-    parser.add_argument("--visualize", action="store_true",
-                        help="visualize features")
-    parser.add_argument("--update", action="store_true",
-                        help="update all models")
-    parser.add_argument("--project", default=ROOT /
-                        "runs/detect", help="save results to project/name")
-    parser.add_argument("--name", default="exp",
-                        help="save results to project/name")
-    parser.add_argument("--exist-ok", action="store_true",
-                        help="existing project/name ok, do not increment")
-    parser.add_argument("--line-thickness", default=3,
-                        type=int, help="bounding box thickness (pixels)")
-    parser.add_argument("--hide-labels", default=False,
-                        action="store_true", help="hide labels")
-    parser.add_argument("--hide-conf", default=False,
-                        action="store_true", help="hide confidences")
-    parser.add_argument("--half", action="store_true",
-                        help="use FP16 half-precision inference")
-    parser.add_argument("--dnn", action="store_true",
-                        help="use OpenCV DNN for ONNX inference")
-    parser.add_argument("--vid-stride", type=int, default=1,
-                        help="video frame-rate stride")
+    parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
+    parser.add_argument("--save-csv", action="store_true", help="save results in CSV format")
+    parser.add_argument("--save-conf", action="store_true", help="save confidences in --save-txt labels")
+    parser.add_argument("--save-crop", action="store_true", help="save cropped prediction boxes")
+    parser.add_argument("--nosave", action="store_true", help="do not save images/videos")
+    parser.add_argument("--classes", nargs="+", type=int, help="filter by class: --classes 0, or --classes 0 2 3")
+    parser.add_argument("--agnostic-nms", action="store_true", help="class-agnostic NMS")
+    parser.add_argument("--augment", action="store_true", help="augmented inference")
+    parser.add_argument("--visualize", action="store_true", help="visualize features")
+    parser.add_argument("--update", action="store_true", help="update all models")
+    parser.add_argument("--project", default=ROOT / "runs/detect", help="save results to project/name")
+    parser.add_argument("--name", default="exp", help="save results to project/name")
+    parser.add_argument("--exist-ok", action="store_true", help="existing project/name ok, do not increment")
+    parser.add_argument("--line-thickness", default=3, type=int, help="bounding box thickness (pixels)")
+    parser.add_argument("--hide-labels", default=False, action="store_true", help="hide labels")
+    parser.add_argument("--hide-conf", default=False, action="store_true", help="hide confidences")
+    parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
+    parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
+    parser.add_argument("--vid-stride", type=int, default=1, help="video frame-rate stride")
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand 将imgsz的信息扩展成h×w
     print_args(vars(opt))

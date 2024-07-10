@@ -164,8 +164,7 @@ def run(
     else:   # 直接读取图像
         dataset = LoadImages(source, img_size=imgsz,
                              stride=stride, auto=pt, vid_stride=vid_stride)
-    vid_path, vid_writer = [None] * bs, [None] * \
-        bs   # 前者是保存视频的路径，后者是一个cv2.VideoWriter对象
+    vid_path, vid_writer = [None] * bs, [None] * bs   # 前者是保存视频的路径，后者是一个cv2.VideoWriter对象
 
     # Run inference 开始推理
     # warmup 加载模型输入一张空图像初始化模型
@@ -297,13 +296,13 @@ def run(
 
                 # Print results
                 # 打印检测到的类别数量
-                for c in det[:, 5].unique():
-                    n = (det[:, 5] == c).sum()  # detections per class
+                for c in det[:, 5].unique():   # unique() 方法返回张量中所有不同值的排序列表。[0, 1, 1, 2, 0]->[0, 1, 2]
+                    n = (det[:, 5] == c).sum()  # detections per class  每个类别计数
                     # add to string
-                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "
+                    s += f"{n} {names[int(c)]}{'s' * (n > 1)}, " # 在打印信息后面添加类别数量和名称
 
                 # Write results
-                for *xyxy, conf, cls in reversed(det):
+                for *xyxy, conf, cls in reversed(det):   # reversed() 函数返回一个反向的迭代器，用于从后往前遍历 det 张量。
                     c = int(cls)  # integer class
                     label = names[c] if hide_conf else f"{names[c]}"
                     confidence = float(conf)
@@ -324,13 +323,13 @@ def run(
                         c = int(cls)  # integer class
                         label = None if hide_labels else (
                             names[c] if hide_conf else f"{names[c]} {conf:.2f}")
-                        annotator.box_label(xyxy, label, color=colors(c, True))
+                        annotator.box_label(xyxy, label, color=colors(c, True))  # 进行绘制
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / "crops" /
                                      names[c] / f"{p.stem}.jpg", BGR=True)
 
-            # Stream results
-            im0 = annotator.result()
+            # Stream results 显示结果
+            im0 = annotator.result()   # annotator.result() 是用于获取带有注释结果的图像。
             if view_img:
                 if platform.system() == "Linux" and p not in windows:
                     windows.append(p)
@@ -344,14 +343,16 @@ def run(
             # Save results (image with detections)
             if save_img:
                 if dataset.mode == "image":
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
+                    cv2.imwrite(save_path, im0)   # 保存图片
+                else:  # 'video' or 'stream'  “视频”或者“流”
                     if vid_path[i] != save_path:  # new video
                         vid_path[i] = save_path
                         if isinstance(vid_writer[i], cv2.VideoWriter):
                             # release previous video writer
-                            vid_writer[i].release()
+                            vid_writer[i].release()   # 释放之前的视频写入器
                         if vid_cap:  # video
+                            # 如果是视频流，它会提取视频的帧率 (FPS)、宽度 (width) 和高度 (height)。
+                            # 这是通过 OpenCV 提供的 cv2.VideoCapture 对象 vid_cap 实现的。
                             fps = vid_cap.get(cv2.CAP_PROP_FPS)
                             w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                             h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -364,13 +365,11 @@ def run(
                     vid_writer[i].write(im0)
 
         # Print time (inference-only)
-        LOGGER.info(
-            f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
+        LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
     # Print results
     t = tuple(x.t / seen * 1e3 for x in dt)  # speeds per image
-    LOGGER.info(
-        f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}" % t)
+    LOGGER.info(f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}" % t)
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ""
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")

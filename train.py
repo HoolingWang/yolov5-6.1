@@ -515,68 +515,130 @@ def train(hyp, opt, device, callbacks):
 
 def parse_opt(known=False):
     """Parses command-line arguments for YOLOv5 training, validation, and testing."""
+    """
+    argparse 使用方法：
+    parse = argparse.ArgumentParser()
+    parse.add_argument('--s', type=int, default=2, help='flag_int')
+    """
     parser = argparse.ArgumentParser()
+    # 配置权重文件 权重的路径./weights/yolov5s.pt.
     parser.add_argument("--weights", type=str, default=ROOT / "yolov5s.pt", help="initial weights path")
+    # cfg 配置文件（网络结构） anchor/backbone/numclasses/head，训练自己的数据集需要自己生成
+    # 生成方式——例如我的yolov5s_mchar.yaml 根据自己的需求选择复制./models/下面.yaml文件，5个文件的区别在于模型的深度和宽度依次递增
     parser.add_argument("--cfg", type=str, default="", help="model.yaml path")
+    # data 数据集配置文件（路径） train/val/label/， 该文件需要自己生成
+    # 生成方式——例如我的/data/mchar.yaml 训练集和验证集的路径 + 类别数 + 类别名称
     parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="dataset.yaml path")
+    # hpy超参数设置文件（lr/sgd/mixup）./data/hyps/下面有5个超参数设置文件，每个文件的超参数初始值有细微区别，用户可以根据自己的需求选择其中一个
     parser.add_argument("--hyp", type=str, default=ROOT / "data/hyps/hyp.scratch-low.yaml", help="hyperparameters path")
+    # 训练轮次
     parser.add_argument("--epochs", type=int, default=100, help="total training epochs")
+    # 训练批次（每次迭代多少张照片）
     parser.add_argument("--batch-size", type=int, default=16, help="total batch size for all GPUs, -1 for autobatch")
+    # 图像尺寸
     parser.add_argument("--imgsz", "--img", "--img-size", type=int, default=640, help="train, val image size (pixels)")
+    # rect 是否采用矩形训练，默认为False
     parser.add_argument("--rect", action="store_true", help="rectangular training")
+    # resume 是否接着上次的训练结果，继续训练
     parser.add_argument("--resume", nargs="?", const=True, default=False, help="resume most recent training")
+    # nosave 不保存模型  默认False(保存)  在./runs/exp*/train/weights/保存两个模型 一个是最后一次的模型 一个是最好的模型
+    # best.pt/ last.pt 不建议运行代码添加 --nosave
     parser.add_argument("--nosave", action="store_true", help="only save final checkpoint")
+    # noval 最后进行测试, 设置了之后就是训练结束后测试一下， 不设置每轮都计算mAP, 建议不设置
     parser.add_argument("--noval", action="store_true", help="only validate final epoch")
+    # noautoanchor 不自动调整anchor, 默认False, 自动调整anchor
     parser.add_argument("--noautoanchor", action="store_true", help="disable AutoAnchor")
+    # 控制是否在处理过程中显示检测结果的图像
     parser.add_argument("--noplots", action="store_true", help="save no plot files")
+    # evolve参数进化， 遗传算法调参
     parser.add_argument("--evolve", type=int, nargs="?", const=300, help="evolve hyperparameters for x generations")
+    # 下载population的路径
     parser.add_argument(
         "--evolve_population", type=str, default=ROOT / "data/hyps", help="location for loading population"
     )
+    # 从先前保存的状态中加载当前种群的配置、超参数及其适应度等信息
     parser.add_argument("--resume_evolve", type=str, default=None, help="resume evolve from last generation")
+    # bucket谷歌优盘 / 一般用不到
     parser.add_argument("--bucket", type=str, default="", help="gsutil bucket")
+    # cache 是否提前缓存图片到内存，以加快训练速度，默认False
     parser.add_argument("--cache", type=str, nargs="?", const="ram", help="image --cache ram/disk")
+    # mage-weights 使用图片采样策略，默认不使用
     parser.add_argument("--image-weights", action="store_true", help="use weighted image selection for training")
+    # device 设备选择
     parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    # multi-scale 多尺度训练
     parser.add_argument("--multi-scale", action="store_true", help="vary img-size +/- 50%%")
+    # single-cls 数据集是否多类/默认True
     parser.add_argument("--single-cls", action="store_true", help="train multi-class data as single-class")
+    # optimizer 优化器选择 / 提供了三种优化器
     parser.add_argument("--optimizer", type=str, choices=["SGD", "Adam", "AdamW"], default="SGD", help="optimizer")
+    # sync-bn:是否使用跨卡同步BN,在DDP模式使用
     parser.add_argument("--sync-bn", action="store_true", help="use SyncBatchNorm, only available in DDP mode")
+    # workers/dataloader的最大worker数量
     parser.add_argument("--workers", type=int, default=8, help="max dataloader workers (per RANK in DDP mode)")
+    # 保存路径 / 默认保存路径 ./runs/ train
     parser.add_argument("--project", default=ROOT / "runs/train", help="save to project/name")
+    # 实验名称
     parser.add_argument("--name", default="exp", help="save to project/name")
+    # 项目位置是否存在 / 默认是都不存在
     parser.add_argument("--exist-ok", action="store_true", help="existing project/name ok, do not increment")
     parser.add_argument("--quad", action="store_true", help="quad dataloader")
+    # cos-lr 余弦学习率
     parser.add_argument("--cos-lr", action="store_true", help="cosine LR scheduler")
+    # 标签平滑 / 默认不增强， 用户可以根据自己标签的实际情况设置这个参数，建议设置小一点 0.1 / 0.05
     parser.add_argument("--label-smoothing", type=float, default=0.0, help="Label smoothing epsilon")
+    # 早停止忍耐次数 / 100次不更新就停止训练
     parser.add_argument("--patience", type=int, default=100, help="EarlyStopping patience (epochs without improvement)")
+    # --freeze冻结训练 可以设置 default = [0] 数据量大的情况下，建议不设置这个参数
     parser.add_argument("--freeze", nargs="+", type=int, default=[0], help="Freeze layers: backbone=10, first3=0 1 2")
+    # --save-period 多少个epoch保存一下checkpoint
     parser.add_argument("--save-period", type=int, default=-1, help="Save checkpoint every x epochs (disabled if < 1)")
+    # 设置随机数生成器的种子
     parser.add_argument("--seed", type=int, default=0, help="Global training seed")
+    # --local_rank 进程编号 / 多卡使用
     parser.add_argument("--local_rank", type=int, default=-1, help="Automatic DDP Multi-GPU argument, do not modify")
 
     # Logger arguments
+    # 在线可视化工具，类似于tensorboard工具，想了解这款工具可以查看https://zhuanlan.zhihu.com/p/266337608
     parser.add_argument("--entity", default=None, help="Entity")
+    # upload_dataset: 是否上传dataset到wandb tabel(将数据集作为交互式 dsviz表 在浏览器中查看、查询、筛选和分析数据集) 默认False
     parser.add_argument("--upload_dataset", nargs="?", const=True, default=False, help='Upload data, "val" option')
+    # bbox_interval: 设置界框图像记录间隔 Set bounding-box image logging interval for W&B 默认-1   opt.epochs // 10
     parser.add_argument("--bbox_interval", type=int, default=-1, help="Set bounding-box image logging interval")
+    # 使用数据的版本
     parser.add_argument("--artifact_alias", type=str, default="latest", help="Version of dataset artifact to use")
 
     # NDJSON logging
     parser.add_argument("--ndjson-console", action="store_true", help="Log ndjson to console")
     parser.add_argument("--ndjson-file", action="store_true", help="Log ndjson to file")
 
+    # 传入的基本配置中没有的参数也不会报错# parse_args()和parse_known_args()
+    # parse = argparse.ArgumentParser()
+    # parse.add_argument('--s', type=int, default=2, help='flag_int')
+    # parser.parse_args() / parse_args()
+
     return parser.parse_known_args()[0] if known else parser.parse_args()
 
 
 def main(opt, callbacks=Callbacks()):
     """Runs training or hyperparameter evolution with specified options and optional callbacks."""
+    ### 检查部分
     if RANK in {-1, 0}:
+        # 输出所有训练参数 / 参数以彩色的方式表现
         print_args(vars(opt))
+        # 检查代码版本是否更新
         check_git_status()
+        # 检查安装是否都安装了 requirements.txt， 缺少安装包安装。
         check_requirements(ROOT / "requirements.txt")
 
+    ### 断点训练
     # Resume (from specified or most recent last.pt)
     if opt.resume and not check_comet_resume(opt) and not opt.evolve:
+        '''
+        opt.resume: 表示是否选择了恢复训练的选项。如果为真，则用户想要从上一次的检查点继续训练。
+        check_comet_resume(opt): 这个函数可能用于检查是否可以通过 Comet 继续训练（Comet 是一个用于机器学习实验的跟踪工具）。如果这个函数返回假，说明不能通过 Comet 继续训练。
+        opt.evolve: 表示是否选择了进化算法的选项。如果为真，则用户希望进行超参数优化或进化搜索。
+        '''
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
         opt_yaml = last.parent.parent / "opt.yaml"  # train options yaml
         opt_data = opt.data  # original dataset

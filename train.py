@@ -14,36 +14,37 @@ Datasets:   https://github.com/ultralytics/yolov5/tree/master/data
 Tutorial:   https://docs.ultralytics.com/yolov5/tutorials/train_custom_data
 """
 
-import argparse
-import math
-import os
-import random
+import argparse   # 解析命令行参数模块
+import math   # 数学公式模块
+import os   # 与操作系统进行交互的模块 包含文件路径操作和解析
+import random   # 生成随机数模块
 import subprocess
-import sys
-import time
-from copy import deepcopy
-from datetime import datetime, timedelta
-from pathlib import Path
+import sys   # sys系统模块 包含了与Python解释器和它的环境有关的函数
+import time   # 时间模块 更底层
+from copy import deepcopy   # 深度拷贝模块
+from datetime import datetime, timedelta   # datetime模块能以更方便的格式显示日期或对日期进行运算。
+from pathlib import Path   # Path将str转换为Path对象 使字符串路径易于操作的模块
 
 try:
     import comet_ml  # must be imported before torch (if installed)
 except ImportError:
     comet_ml = None
 
-import numpy as np
+import numpy as np   # numpy数组操作模块
 import torch
-import torch.distributed as dist
-import torch.nn as nn
-import yaml
-from torch.optim import lr_scheduler
-from tqdm import tqdm
+import torch.distributed as dist   # 分布式训练模块
+import torch.nn as nn   # 对torch.nn.functional的类的封装 有很多和torch.nn.functional相同的函数
+import yaml   # yaml是一种直观的能够被电脑识别的的数据序列化格式，容易被人类阅读，并且容易和脚本语言交互。一般用于存储配置文件。
+from torch.optim import lr_scheduler   # PyTorch amp自动混合精度训练模块
+from tqdm import tqdm   # 进度条模块
 
-FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+FILE = Path(__file__).resolve()  # __file__指的是当前文件(即train.py),FILE最终保存着当前文件的绝对路径,比如D://yolov5/train.py
+ROOT = FILE.parents[0]  # YOLOv5 root directory  ROOT保存着当前项目的父目录,比如 D://yolov5
+if str(ROOT) not in sys.path:  # sys.path即当前python环境可以运行的路径,假如当前项目不在该路径中,就无法运行其中的模块,所以就需要加载路径
+    sys.path.append(str(ROOT))  # add ROOT to PATH  把ROOT添加到运行路径上
+ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative ROOT设置为相对路径
 
+### 加载自定义模块
 import val as validate  # for end-of-epoch mAP
 from models.experimental import attempt_load
 from models.yolo import Model
@@ -94,9 +95,24 @@ from utils.torch_utils import (
     torch_distributed_zero_first,
 )
 
+### Set DDP variables 分布式训练参数
+# LOCAL_RANK 通常用于分布式训练，以标识当前进程在多进程中的位置。以下是几种常见的使用场景：
+# 单机多卡训练：在一台机器上使用多个 GPU 进行训练，每个 GPU 由一个进程管理，LOCAL_RANK 用于标识每个进程对应的 GPU 编号。
+# 分布式训练：在多台机器上进行训练，每台机器上运行多个进程，LOCAL_RANK 用于标识每个进程在本地机器上的编号。
+# 当 LOCAL_RANK 为 -1 时，通常表示未进行分布式训练，代码会按照单 GPU 或 CPU 的模式执行。
 LOCAL_RANK = int(os.getenv("LOCAL_RANK", -1))  # https://pytorch.org/docs/stable/elastic/run.html
+# 当 RANK 为 -1 时，通常表示未进行分布式训练，代码会按照单 GPU 或 CPU 的模式执行。RANK 与 LOCAL_RANK 的区别在于：
+# RANK 标识全局进程编号，在整个分布式系统中唯一。
+# LOCAL_RANK 标识本地进程编号，在单台机器上的进程中唯一。
 RANK = int(os.getenv("RANK", -1))
+# WORLD_SIZE 通常用于分布式训练，以标识整个分布式系统中进程的总数。它用于设置和管理多机多卡训练环境。
 WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
+'''
+    查找名为LOCAL_RANK，RANK，WORLD_SIZE的环境变量，
+    若存在则返回环境变量的值，若不存在则返回第二个参数（-1，默认None）
+    rank和local_rank的区别： 两者的区别在于前者用于进程间通讯，后者用于本地设备分配。
+'''
+# check_git_info() 函数用于检查和获取当前 Git 仓库的相关信息，例如当前分支、提交哈希值、提交信息等。
 GIT_INFO = check_git_info()
 
 
@@ -124,24 +140,30 @@ def train(hyp, opt, device, callbacks):
     )
     callbacks.run("on_pretrain_routine_start")
 
-    # Directories
-    w = save_dir / "weights"  # weights dir
+    # Directories 设置目录和文件路径，用于保存训练过程中产生的权重文件和结果文件
+    w = save_dir / "weights"  # weights dir 是一个路径变量，表示保存权重文件的根目录
     (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
+    # 'last'和'best'是保存最后训练结果和最好训练结果的权重文件的路径变量。
     last, best = w / "last.pt", w / "best.pt"
 
-    # Hyperparameters
-    if isinstance(hyp, str):
+    # Hyperparameters 加载超参数
+    if isinstance(hyp, str):   # isinstance()是否是已知类型。 判断hyp是字典还是字符串
         with open(hyp, errors="ignore") as f:
+            # 若hyp是字符串，即认定为路径，则加载超参数为字典
             hyp = yaml.safe_load(f)  # load hyps dict
+    # 打印超参数 彩色字体
     LOGGER.info(colorstr("hyperparameters: ") + ", ".join(f"{k}={v}" for k, v in hyp.items()))
     opt.hyp = hyp.copy()  # for saving hyps to checkpoints
 
-    # Save run settings
+    # Save run settings   保存训练中的参数hyp和opt
     if not evolve:
+        # 保存超参数为yaml配置文件
         yaml_save(save_dir / "hyp.yaml", hyp)
+        # 保存超参数为yaml配置文件
         yaml_save(save_dir / "opt.yaml", vars(opt))
 
-    # Loggers
+    # Loggers   加载相关日志功能:如tensorboard,logger,wandb
+    # 设置wandb和tb两种日志, wandb和tensorboard都是模型信息，指标可视化工具
     data_dict = None
     if RANK in {-1, 0}:
         include_loggers = list(LOGGERS)
@@ -150,6 +172,7 @@ def train(hyp, opt, device, callbacks):
         if getattr(opt, "ndjson_file", False):
             include_loggers.append("ndjson_file")
 
+        # 初始化日志记录器实例
         loggers = Loggers(
             save_dir=save_dir,
             weights=weights,
@@ -161,86 +184,142 @@ def train(hyp, opt, device, callbacks):
 
         # Register actions
         for k in methods(loggers):
+            # 将日志记录器中的方法与字符串进行绑定
             callbacks.register_action(k, callback=getattr(loggers, k))
 
         # Process custom dataset artifact link
+        # 定义数据集字典
         data_dict = loggers.remote_dataset
         if resume:  # If resuming runs from remote artifact
             weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
 
-    # Config
+    ### 画图开关,cuda,种子,读取数据集相关的yaml文件
+    # Config   画图
     plots = not evolve and not opt.noplots  # create plots
     cuda = device.type != "cpu"
+    # 设置随机种子
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
+    # 加载数据配置信息
     with torch_distributed_zero_first(LOCAL_RANK):
         data_dict = data_dict or check_dataset(data)  # check if None
+    # 获取训练集、测试集图片路径
     train_path, val_path = data_dict["train"], data_dict["val"]
+    # nc：数据集有多少种类别
     nc = 1 if single_cls else int(data_dict["nc"])  # number of classes
+    # names: 数据集所有类别的名字，如果设置了single_cls则为一类
     names = {0: "item"} if single_cls and len(data_dict["names"]) != 1 else data_dict["names"]  # class names
+    # 当前数据集是否是coco数据集(80个类别)
     is_coco = isinstance(val_path, str) and val_path.endswith("coco/val2017.txt")  # COCO dataset
 
-    # Model
+    # Model 载入模型
+    # 检查文件后缀是否是.pt
     check_suffix(weights, ".pt")  # check weights
-    pretrained = weights.endswith(".pt")
+    # 加载预训练权重 yolov5提供了5个不同的预训练权重，可以根据自己的模型选择预训练权重
+    pretrained = weights.endswith(".pt")   # type(pretrained) = bool
     if pretrained:
+        # torch_distributed_zero_first(RANK): 用于同步不同进程对数据读取的上下文管理器
         with torch_distributed_zero_first(LOCAL_RANK):
+            # attempt_download首先判断是否在本地，如果本地不存在就从google云盘中自动下载模型
             weights = attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location="cpu")  # load checkpoint to CPU to avoid CUDA memory leak
+        """
+        两种加载模型的方式: opt.cfg / ckpt['model'].yaml
+        这两种方式的区别：区别在于是否是使用resume
+        如果使用resume-断点训练: 
+        将opt.cfg设为空，选择ckpt['model']yaml创建模型, 且不加载anchor。
+        这也影响了下面是否除去anchor的key(也就是不加载anchor), 如果resume则不加载anchor
+        原因：
+        使用断点训练时,保存的模型会保存anchor,所以不需要加载，
+        主要是预训练权重里面保存了默认coco数据集对应的anchor，
+        如果用户自定义了anchor（先验框），再加载预训练权重进行训练，会覆盖掉用户自定义的anchor。
+        """
+        # 加载模型
         model = Model(cfg or ckpt["model"].yaml, ch=3, nc=nc, anchors=hyp.get("anchors")).to(device)  # create
+        # 若cfg 或 hyp.get('anchors')不为空且不使用中断训练 exclude=['anchor'] 否则 exclude=[]
         exclude = ["anchor"] if (cfg or hyp.get("anchors")) and not resume else []  # exclude keys
+        # 将预训练模型中的所有参数保存下来，赋值给csd
         csd = ckpt["model"].float().state_dict()  # checkpoint state_dict as FP32
+        # 判断预训练参数和新创建的模型参数有多少是相同的
+        # 筛选字典中的键值对，把exclude删除
         csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
+
+        ### 创建模型
         model.load_state_dict(csd, strict=False)  # load
+        # 显示加载预训练权重的的键值对和创建模型的键值对
+        # 如果pretrained为ture 则会少加载两个键对（anchors, anchor_grid）
         LOGGER.info(f"Transferred {len(csd)}/{len(model.state_dict())} items from {weights}")  # report
     else:
+        # 直接加载模型，ch为输入图片通道
         model = Model(cfg, ch=3, nc=nc, anchors=hyp.get("anchors")).to(device)  # create
     amp = check_amp(model)  # check AMP
 
     # Freeze
+    """
+    冻结模型层,设置冻结层名字即可
+    作用：冰冻一些层，就使得这些层在反向传播的时候不再更新权重,需要冻结的层,可以写在freeze列表中
+    freeze为命令行参数，默认为0，表示不冻结
+    """
     freeze = [f"model.{x}." for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # layers to freeze
+    # 首先遍历所有层
     for k, v in model.named_parameters():
+        # 为所有层的参数设置梯度
         v.requires_grad = True  # train all layers
         # v.register_hook(lambda x: torch.nan_to_num(x))  # NaN to 0 (commented for erratic training results)
+        # 判断是否需要冻结
         if any(x in k for x in freeze):
             LOGGER.info(f"freezing {k}")
+            # 冻结训练的层梯度不更新
             v.requires_grad = False
 
-    # Image size
+    # Image size   设置训练和测试图片尺寸
+    # 获取模型总步长和模型输入图片分辨率
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
+    # 检查输入图片分辨率是否能被32整除
     imgsz = check_img_size(opt.imgsz, gs, floor=gs * 2)  # verify imgsz is gs-multiple
 
-    # Batch size
+    # Batch size   设置一次训练所选取的样本数
     if RANK == -1 and batch_size == -1:  # single-GPU only, estimate best batch size
+        # 确保batch size满足要求
         batch_size = check_train_batch_size(model, imgsz, amp)
         loggers.on_params_update({"batch_size": batch_size})
 
-    # Optimizer
+    # Optimizer   优化器
+    """
+    nbs = 64
+    batchsize = 16
+    accumulate = 64 / 16 = 4
+    模型梯度累计accumulate次之后就更新一次模型 相当于使用更大batch_size
+    """
     nbs = 64  # nominal batch size
     accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
+    # 根据accumulate设置权重衰减参数，防止过拟合
     hyp["weight_decay"] *= batch_size * accumulate / nbs  # scale weight_decay
     optimizer = smart_optimizer(model, opt.optimizer, hyp["lr0"], hyp["momentum"], hyp["weight_decay"])
 
-    # Scheduler
+    # Scheduler   设置学习率策略:两者可供选择，线性学习率和余弦退火学习率
     if opt.cos_lr:
+        # 使用余弦退火学习率
         lf = one_cycle(1, hyp["lrf"], epochs)  # cosine 1->hyp['lrf']
     else:
-
+        # 使用余弦退火学习率
         def lf(x):
             return (1 - x / epochs) * (1.0 - hyp["lrf"]) + hyp["lrf"]  # linear
-
+    # 可视化 scheduler
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
-    # EMA
+    # EMA 设置ema（指数移动平均），考虑历史值对参数的影响，目的是为了收敛的曲线更加平滑
     ema = ModelEMA(model) if RANK in {-1, 0} else None
 
     # Resume
+    # 断点续训其实就是把上次训练结束的模型作为预训练模型，并从中加载参数
     best_fitness, start_epoch = 0.0, 0
     if pretrained:
         if resume:
             best_fitness, start_epoch, epochs = smart_resume(ckpt, optimizer, ema, weights, epochs, resume)
         del ckpt, csd
 
-    # DP mode
+    # DP mode  使用单机多卡模式训练，目前一般不使用
+    # rank=-1且gpu数量=1时,不会进行分布式
     if cuda and RANK == -1 and torch.cuda.device_count() > 1:
         LOGGER.warning(
             "WARNING ⚠️ DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n"
@@ -248,12 +327,12 @@ def train(hyp, opt, device, callbacks):
         )
         model = torch.nn.DataParallel(model)
 
-    # SyncBatchNorm
-    if opt.sync_bn and cuda and RANK != -1:
+    # SyncBatchNorm  多卡归一化
+    if opt.sync_bn and cuda and RANK != -1:  # 多卡训练，把不同卡的数据做个同步
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
         LOGGER.info("Using SyncBatchNorm()")
 
-    # Trainloader
+    # Trainloader   训练集数据加载
     train_loader, dataset = create_dataloader(
         train_path,
         imgsz,
@@ -272,11 +351,17 @@ def train(hyp, opt, device, callbacks):
         shuffle=True,
         seed=opt.seed,
     )
+    '''
+      返回一个训练数据加载器，一个数据集对象:
+      训练数据加载器是一个可迭代的对象，可以通过for循环加载1个batch_size的数据
+      数据集对象包括数据集的一些参数，包括所有标签值、所有的训练数据路径、每张图片的尺寸等等
+    '''
     labels = np.concatenate(dataset.labels, 0)
+    # 标签编号最大值  也可以理解为有多少类别
     mlc = int(labels[:, 0].max())  # max label class
     assert mlc < nc, f"Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}"
 
-    # Process 0
+    # Process 0  创建验证集
     if RANK in {-1, 0}:
         val_loader = create_dataloader(
             val_path,
@@ -294,17 +379,26 @@ def train(hyp, opt, device, callbacks):
         )[0]
 
         if not resume:
+            # opt.noautoanchor 为 False，则检查数据集的锚点并根据模型和阈值运行自动锚点调整。
+            # Anchors 计算默认锚框anchor与数据集标签框的高宽比
             if not opt.noautoanchor:
+                '''
+                参数dataset代表的是训练集，hyp['anchor_t']是从配置文件hpy.scratch.yaml读取的超参数，anchor_t:4.0
+                当配置文件中的anchor计算bpr（best possible recall）小于0.98时才会重新计算anchor。
+                best possible recall最大值1，如果bpr小于0.98，程序会根据数据集的label自动学习anchor的尺寸
+                '''
                 check_anchors(dataset, model=model, thr=hyp["anchor_t"], imgsz=imgsz)  # run AutoAnchor
+            # 将模型的浮点精度从半精度 (FP16) 调整为单精度 (FP32)。
             model.half().float()  # pre-reduce anchor precision
-
+        # 在每个训练前例行程序结束时触发所有已注册的回调
         callbacks.run("on_pretrain_routine_end", labels, names)
 
-    # DDP mode
+    # DDP mode   如果rank不等于-1,则使用DistributedDataParallel模式
     if cuda and RANK != -1:
+        # local_rank为gpu编号,rank为进程,例如rank=3，local_rank=0 表示第 3 个进程内的第 1 块 GPU。
         model = smart_DDP(model)
 
-    # Model attributes
+    # Model attributes   根据自己数据集的类别数和网络FPN层数设置各个损失的系数
     nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
     hyp["box"] *= 3 / nl  # scale to layers
     hyp["cls"] *= nc / 80 * 3 / nl  # scale to classes and layers
@@ -512,7 +606,6 @@ def train(hyp, opt, device, callbacks):
     torch.cuda.empty_cache()
     return results
 
-
 def parse_opt(known=False):
     """Parses command-line arguments for YOLOv5 training, validation, and testing."""
     """
@@ -520,21 +613,21 @@ def parse_opt(known=False):
     parse = argparse.ArgumentParser()
     parse.add_argument('--s', type=int, default=2, help='flag_int')
     """
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser("yolov5超参管理")
     # 配置权重文件 权重的路径./weights/yolov5s.pt.
     parser.add_argument("--weights", type=str, default=ROOT / "yolov5s.pt", help="initial weights path")
     # cfg 配置文件（网络结构） anchor/backbone/numclasses/head，训练自己的数据集需要自己生成
     # 生成方式——例如我的yolov5s_mchar.yaml 根据自己的需求选择复制./models/下面.yaml文件，5个文件的区别在于模型的深度和宽度依次递增
-    parser.add_argument("--cfg", type=str, default="", help="model.yaml path")
+    parser.add_argument("--cfg", type=str, default=ROOT / "./models/yolov5s.yaml", help="model.yaml path")
     # data 数据集配置文件（路径） train/val/label/， 该文件需要自己生成
     # 生成方式——例如我的/data/mchar.yaml 训练集和验证集的路径 + 类别数 + 类别名称
-    parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="dataset.yaml path")
+    parser.add_argument("--data", type=str, default=ROOT / "./data/apple-fys.yaml", help="dataset.yaml path")
     # hpy超参数设置文件（lr/sgd/mixup）./data/hyps/下面有5个超参数设置文件，每个文件的超参数初始值有细微区别，用户可以根据自己的需求选择其中一个
     parser.add_argument("--hyp", type=str, default=ROOT / "data/hyps/hyp.scratch-low.yaml", help="hyperparameters path")
     # 训练轮次
-    parser.add_argument("--epochs", type=int, default=100, help="total training epochs")
+    parser.add_argument("--epochs", type=int, default=50, help="total training epochs")
     # 训练批次（每次迭代多少张照片）
-    parser.add_argument("--batch-size", type=int, default=16, help="total batch size for all GPUs, -1 for autobatch")
+    parser.add_argument("--batch-size", type=int, default=2, help="total batch size for all GPUs, -1 for autobatch")
     # 图像尺寸
     parser.add_argument("--imgsz", "--img", "--img-size", type=int, default=640, help="train, val image size (pixels)")
     # rect 是否采用矩形训练，默认为False
@@ -565,7 +658,7 @@ def parse_opt(known=False):
     # mage-weights 使用图片采样策略，默认不使用
     parser.add_argument("--image-weights", action="store_true", help="use weighted image selection for training")
     # device 设备选择
-    parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    parser.add_argument("--device", default=0, help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     # multi-scale 多尺度训练
     parser.add_argument("--multi-scale", action="store_true", help="vary img-size +/- 50%%")
     # single-cls 数据集是否多类/默认True
@@ -623,52 +716,70 @@ def parse_opt(known=False):
 def main(opt, callbacks=Callbacks()):
     """Runs training or hyperparameter evolution with specified options and optional callbacks."""
     ### 检查部分
+    # 根据 global_rank 设置日志记录
     if RANK in {-1, 0}:
         # 输出所有训练参数 / 参数以彩色的方式表现
         print_args(vars(opt))
-        # 检查代码版本是否更新
+        # 检查代码库的Git状态，确保代码库没有未提交的更改
         check_git_status()
         # 检查安装是否都安装了 requirements.txt， 缺少安装包安装。
         check_requirements(ROOT / "requirements.txt")
 
     ### 断点训练
     # Resume (from specified or most recent last.pt)
-    if opt.resume and not check_comet_resume(opt) and not opt.evolve:
+    if opt.resume and not check_comet_resume(opt) and not opt.evolve: # opt.resume为真，可以通过comet训练，不使用进化算法同时满足
         '''
         opt.resume: 表示是否选择了恢复训练的选项。如果为真，则用户想要从上一次的检查点继续训练。
         check_comet_resume(opt): 这个函数可能用于检查是否可以通过 Comet 继续训练（Comet 是一个用于机器学习实验的跟踪工具）。如果这个函数返回假，说明不能通过 Comet 继续训练。
         opt.evolve: 表示是否选择了进化算法的选项。如果为真，则用户希望进行超参数优化或进化搜索。
         '''
+        # resume权重路径，opt.resume不是字符串就加载最后一次运行结果
         last = Path(check_file(opt.resume) if isinstance(opt.resume, str) else get_latest_run())
+        # 加载resume配置文件
         opt_yaml = last.parent.parent / "opt.yaml"  # train options yaml
+        # resume数据，原数据集
         opt_data = opt.data  # original dataset
+        # opt_yaml.is_file() 是 pathlib.Path 对象的方法之一，用于检查路径是否是一个文件。
         if opt_yaml.is_file():
             with open(opt_yaml, errors="ignore") as f:
+                # 使用 yaml 库安全地加载 YAML 文件内容，并将其赋值给变量 d
                 d = yaml.safe_load(f)
+        # 没有yaml文件就直接加载last.pt
         else:
+            # 使用 torch 库加载一个存储在 last 路径下的模型文件，并从中提取名为 opt 的配置数据，将其赋值给变量 d
             d = torch.load(last, map_location="cpu")["opt"]
+        # 替换之前的opt为提取的opt
         opt = argparse.Namespace(**d)  # replace
         opt.cfg, opt.weights, opt.resume = "", str(last), True  # reinstate
+        # 检查 opt_data 是否是一个 URL，如果是，则通过 check_file 函数处理该 URL 并将结果赋值给 opt.data
         if is_url(opt_data):
             opt.data = check_file(opt_data)  # avoid HUB resume auth timeout
+
+    ### 从头训练
     else:
+        # 检查文件夹及相关路径
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = (
-            check_file(opt.data),
+            check_file(opt.data),  # check_file 检查文件属性是否合理
             check_yaml(opt.cfg),
             check_yaml(opt.hyp),
             str(opt.weights),
             str(opt.project),
         )  # checks
+        # assert 语句: 用于检查条件是否为真。如果条件为假，则抛出一个 AssertionError 并显示指定的错误消息。
+        # opt.cfg 或 opt.weights 至少有一个是非空的。如果这两个参数都为空，则抛出一个断言错误并显示错误信息 "either --cfg or --weights must be specified"。
         assert len(opt.cfg) or len(opt.weights), "either --cfg or --weights must be specified"
+        # 如果使用遗传算法调参
         if opt.evolve:
             if opt.project == str(ROOT / "runs/train"):  # if default project name, rename to runs/evolve
                 opt.project = str(ROOT / "runs/evolve")
+            # 使用遗传算法就重置opt.exist_ok, opt.resume参数
             opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         if opt.name == "cfg":
+            # .stem 属性获取文件名的基础名（不含扩展名）
             opt.name = Path(opt.cfg).stem  # use model.yaml as name
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
-    # DDP mode
+    # DDP mode  DDP mode 设置分布式数据进行模式
     device = select_device(opt.device, batch_size=opt.batch_size)
     if LOCAL_RANK != -1:
         msg = "is not compatible with YOLOv5 Multi-GPU DDP training"
@@ -683,13 +794,14 @@ def main(opt, callbacks=Callbacks()):
             backend="nccl" if dist.is_nccl_available() else "gloo", timeout=timedelta(seconds=10800)
         )
 
-    # Train
+    # Train 训练模式: 如果不进行超参数进化，则直接调用train()函数，开始训练
     if not opt.evolve:
         train(opt.hyp, opt, device, callbacks)
 
     # Evolve hyperparameters (optional)
     else:
         # Hyperparameter evolution metadata (including this hyperparameter True-False, lower_limit, upper_limit)
+        # 超参数列表(是否包含该超参数 - 最小值 - 最大值)
         meta = {
             "lr0": (False, 1e-5, 1e-1),  # initial learning rate (SGD=1E-2, Adam=1E-3)
             "lrf": (False, 0.01, 1.0),  # final OneCycleLR learning rate (lr0 * lrf)
@@ -733,12 +845,15 @@ def main(opt, callbacks=Callbacks()):
         tournament_size_min = 2
         tournament_size_max = 10
 
+        # 加载默认超参数
         with open(opt.hyp, errors="ignore") as f:
             hyp = yaml.safe_load(f)  # load hyps dict
+            # 如果超参数文件中没有'anchors'，则设为3
             if "anchors" not in hyp:  # anchors commented in hyp.yaml
                 hyp["anchors"] = 3
         if opt.noautoanchor:
             del hyp["anchors"], meta["anchors"]
+        # 使用进化算法时，仅在最后的epoch测试和保存
         opt.noval, opt.nosave, save_dir = True, True, Path(opt.save_dir)  # only val/save final epoch
         # ei = [isinstance(x, (int, float)) for x in hyp.values()]  # evolvable indices
         evolve_yaml, evolve_csv = save_dir / "hyp_evolve.yaml", save_dir / "evolve.csv"
@@ -752,6 +867,10 @@ def main(opt, callbacks=Callbacks()):
                     str(evolve_csv),
                 ]
             )
+        """
+           遗传算法调参：遵循适者生存、优胜劣汰的法则，即寻优过程中保留有用的，去除无用的。
+           遗传算法需要提前设置4个参数: 群体大小/进化代数/交叉概率/变异概率
+        """
 
         # Delete the items in meta dictionary whose first value is False
         del_ = [item for item, value_ in meta.items() if value_[0] is False]
@@ -888,6 +1007,7 @@ def main(opt, callbacks=Callbacks()):
 
 def generate_individual(input_ranges, individual_length):
     """Generates a list of random values within specified input ranges for each gene in the individual."""
+    """为individual中的每个元素生成指定范围内的随机数组成list"""
     individual = []
     for i in range(individual_length):
         lower_bound, upper_bound = input_ranges[i]
@@ -898,11 +1018,12 @@ def generate_individual(input_ranges, individual_length):
 def run(**kwargs):
     """
     Executes YOLOv5 training with given options, overriding with any kwargs provided.
-
     Example: import train; train.run(data='coco128.yaml', imgsz=320, weights='yolov5m.pt')
     """
+    # 执行这个脚本/ 调用train函数 / 开启训练
     opt = parse_opt(True)
     for k, v in kwargs.items():
+        # setattr() 赋值属性，属性不存在则创建一个赋值
         setattr(opt, k, v)
     main(opt)
     return opt

@@ -217,29 +217,49 @@ class DetectionModel(BaseModel):
     # YOLOv5 detection model
     def __init__(self, cfg="yolov5s.yaml", ch=3, nc=None, anchors=None):
         """Initializes YOLOv5 model with configuration file, input channels, number of classes, and custom anchors."""
+        '''
+        :params cfg:模型配置文件
+        :params ch: input img channels 一般是3 RGB文件
+        :params nc: number of classes 数据集的类别个数
+        :anchors: 一般是None
+        '''
         super().__init__()
-        if isinstance(cfg, dict):
+        if isinstance(cfg, dict):  # cfg一般是yaml文件，执行下一句
             self.yaml = cfg  # model dict
         else:  # is *.yaml
             import yaml  # for torch hub
 
             self.yaml_file = Path(cfg).name
+            # 如果配置文件中有中文，打开时要加encoding参数
             with open(cfg, encoding="ascii", errors="ignore") as f:
+                # model dict  取到配置文件中每条的信息（没有注释内容）
                 self.yaml = yaml.safe_load(f)  # model dict
 
         # Define model
+        # input channels  ch=3
+        # self.yaml.get("ch", ch)：尝试从 self.yaml 中获取键 "ch" 对应的值，如果不存在，则返回 ch。
         ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
+        # 检查输入nc与配置文件nc是否一致，如果不一致用获取到的nc覆盖配置文件中的nc
         if nc and nc != self.yaml["nc"]:
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml["nc"] = nc  # override yaml value
+        # 重写anchor，一般不执行, 因为传进来的anchors一般都是None
         if anchors:
             LOGGER.info(f"Overriding model.yaml anchors with anchors={anchors}")
             self.yaml["anchors"] = round(anchors)  # override yaml value
+
+        # 创建网络模型
+        # self.model: 初始化的整个网络模型(包括Detect层结构)
+        # self.save: 所有层结构中from不等于-1的序号，并排好序  [4, 6, 10, 14, 17, 20, 23]
+        # deepcopy(self.yaml)：创建 self.yaml 的深度副本。这是为了防止对 self.yaml 的更改影响原始数据。
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist
+        # default class names ['0', '1', '2',..., '19']
         self.names = [str(i) for i in range(self.yaml["nc"])]  # default names
+        # self.inplace=True  默认True  不使用加速推理
         self.inplace = self.yaml.get("inplace", True)
 
         # Build strides, anchors
+        # 获取Detect模块的stride(相对输入图像的下采样率)和anchors在当前Detect输出的feature map的尺度
         m = self.model[-1]  # Detect()
         if isinstance(m, (Detect, Segment)):
 
@@ -247,10 +267,15 @@ class DetectionModel(BaseModel):
                 """Passes the input 'x' through the model and returns the processed output."""
                 return self.forward(x)[0] if isinstance(m, Segment) else self.forward(x)
 
+
             s = 256  # 2x min stride
             m.inplace = self.inplace
+            # 计算三个feature map下采样的倍率  [8, 16, 32]
+            # 使用前馈网络得到特征图计算下采样倍数
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
+            # 检查anchor顺序与stride顺序是否一致
             check_anchor_order(m)
+            # 将anchors进行放缩，恢复到原始图像大小
             m.anchors /= m.stride.view(-1, 1, 1)
             self.stride = m.stride
             self._initialize_biases()  # only run once
@@ -369,32 +394,59 @@ class ClassificationModel(BaseModel):
         self.model = None
 
 
-def parse_model(d, ch):
+def parse_model(d, ch):  # d: model_dict   ch=[3]
     """Parses a YOLOv5 model from a dict `d`, configuring layers based on input channels `ch` and model architecture."""
+    """用在上面Model模块中
+        解析模型文件(字典形式)，并搭建网络结构
+        这个函数其实主要做的就是: 更新当前层的args（参数）,计算c2（当前层的输出channel） =>
+                              使用当前层的参数搭建当前层 =>
+                              生成 layers + save
+        :params d: model_dict 模型文件 字典形式 {dict:7}  yolov5s.yaml中的6个元素 + ch
+        :params ch: 记录模型每一层的输出channel 初始ch=[3] 后面会删除
+        :return nn.Sequential(*layers): 网络的每一层的层结构
+        :return sorted(save): 把所有层结构中from不是-1的值记下 并排序 [4, 6, 10, 14, 17, 20, 23]
+        """
     LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    # 读取d字典中的anchors和parameters(nc、depth_multiple、width_multiple)
     anchors, nc, gd, gw, act, ch_mul = (
-        d["anchors"],
-        d["nc"],
-        d["depth_multiple"],
-        d["width_multiple"],
-        d.get("activation"),
-        d.get("channel_multiple"),
+        d["anchors"],   # 预设检测框
+        d["nc"],   # number class
+        d["depth_multiple"],   # depth_multiple 的作用是通过缩放因子来调整模型的深度，控制网络中每一层的深度（即卷积层的数量）。
+        d["width_multiple"],   # width_multiple 通过缩放因子调整模型的宽度，控制每一层卷积层的宽度（即通道数）。
+        d.get("activation"),   # 获取激活函数配置
+        d.get("channel_multiple"),   # depth_multiple 和 width_multiple 参数来调整模型的深度和宽度，但 channel_multiple 参数也可以用来更细粒度地控制模型中各层的通道数
     )
+    '''
+    .get 和 使用 [] 索引是 Python 中从字典中获取值的两种常见方式，但它们有一些关键区别：
+    使用 [] 索引时，如果键不存在，会引发 KeyError 异常。
+    使用 .get 方法时，如果键不存在，不会引发异常，而是返回 None 或指定的默认值。
+    '''
     if act:
         Conv.default_act = eval(act)  # redefine default activation, i.e. Conv.default_act = nn.SiLU()
         LOGGER.info(f"{colorstr('activation:')} {act}")  # print
     if not ch_mul:
         ch_mul = 8
+    # na: number of anchors 每一个predict head上的anchor数 = 3
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
+    # no: number of outputs 每一个predict head层的输出channel = anchors * (classes + 5) = 75(VOC)
     no = na * (nc + 5)  # number of outputs = anchors * (classes + 5)
 
+    # 开始搭建网络
+    # layers: 保存每一层的层结构
+    # save: 记录下所有层结构中from中不是-1的层结构序号，这些结构保存下来供后面层使用
+    # c2: 保存当前层的输出channel
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+    # from(当前层输入来自哪些层), number(当前层次数 初定), module(当前层类别), args(当前层类参数 初定)
+    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args  # 遍历backbone和head的每一层
         m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
-            with contextlib.suppress(NameError):
+            # contextlib.suppress 是一个上下文管理器，用于在其块内抑制指定的异常。在这里，它用于抑制 NameError 异常。
+            with contextlib.suppress(NameError):  # 如果有异常说明输入又有问题，尝试转求值赋值
+                # 如果 a 是一个字符串，eval(a) 将对该字符串进行求值。如果求值成功，结果将赋值给 args[j]。如果 a 不是字符串，则保持原值不变。
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
 
+        # depth gain 控制深度  如v5s: n*0.33   n: 当前模块的次数(间接控制深度)
+        # round(n * gd)：将 n 和缩放因子 gd 相乘，并对结果进行四舍五入。
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {
             Conv,
@@ -416,20 +468,31 @@ def parse_model(d, ch):
             DWConvTranspose2d,
             C3x,
         }:
+            # c1: 当前层的输入的channel数  c2: 当前层的输出的channel数(初定)  ch: 记录着所有层的输出channel
             c1, c2 = ch[f], args[0]
+            # 只有最后一层c2=no  最后一层不用控制宽度，输出channel必须是no
             if c2 != no:  # if not output
-                c2 = make_divisible(c2 * gw, ch_mul)
+                # width gain 控制宽度  如v5s: c2*0.5  c2: 当前层的最终输出的channel数(间接控制宽度)
+                c2 = make_divisible(c2 * gw, ch_mul)   # make_divisible 函数确保输入值 x 能够被指定的 divisor 整除，并返回最接近且不小于 x 的值。
 
+            # 在初始arg的基础上更新 加入当前层的输入channel并更新当前层
+            # [in_channel, out_channel, *args[1:]]
             args = [c1, c2, *args[1:]]
+            # 如果当前层是BottleneckCSP/C3/C3TR, 则需要在args中加入bottleneck的个数
+            # [in_channel, out_channel, Bottleneck的个数n, bool(True表示有shortcut 默认，反之无)]
             if m in {BottleneckCSP, C3, C3TR, C3Ghost, C3x}:
+                # 在第二个位置插入bottleneck个数n
                 args.insert(2, n)  # number of repeats
                 n = 1
         elif m is nn.BatchNorm2d:
+            # BN层只需要返回上一层的输出channel
             args = [ch[f]]
         elif m is Concat:
+            # Concat层则将f中所有的输出累加得到这层的输出channel
             c2 = sum(ch[x] for x in f)
         # TODO: channel, gw, gd
         elif m in {Detect, Segment}:
+            # 在args中加入三个Detect层的输出channel
             args.append([ch[x] for x in f])
             if isinstance(args[1], int):  # number of anchors
                 args[1] = [list(range(args[1] * 2))] * len(f)
@@ -440,18 +503,24 @@ def parse_model(d, ch):
         elif m is Expand:
             c2 = ch[f] // args[0] ** 2
         else:
-            c2 = ch[f]
+            c2 = ch[f]    # args不变
 
+        # m_: 得到当前层module  如果n>1就创建多个m(当前层结构), 如果n=1就创建一个m
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+
+        # 打印当前层结构的一些基本信息
         t = str(m)[8:-2].replace("__main__.", "")  # module type
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
         LOGGER.info(f"{i:>3}{str(f):>18}{n_:>3}{np:10.0f}  {t:<40}{str(args):<30}")  # print
+
+        # 保存层  把所有层结构中from不是-1的值记下  [6, 4, 14, 10, 17, 20, 23]
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        # 将当前层结构module加入layers中
         layers.append(m_)
         if i == 0:
-            ch = []
-        ch.append(c2)
+            ch = []   # 去除输入channel [3]
+        ch.append(c2)    # 把当前层的输出channel数加入ch
     return nn.Sequential(*layers), sorted(save)
 
 

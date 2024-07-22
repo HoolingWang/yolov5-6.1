@@ -699,7 +699,7 @@ def make_divisible(x, divisor):
     """Adjusts `x` to be divisible by `divisor`, returning the nearest greater or equal value."""
     if isinstance(divisor, torch.Tensor):
         divisor = int(divisor.max())  # to int
-    return math.ceil(x / divisor) * divisor
+    return math.ceil(x / divisor) * divisor   # math.ceil(x / divisor) 计算出 x 除以 divisor 的商，并向上取整
 
 
 def clean_str(s):

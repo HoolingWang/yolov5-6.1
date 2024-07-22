@@ -90,8 +90,9 @@ def reshape_classifier_output(model, n=1000):
 
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):
-    """Context manager ensuring ordered operations in distributed training by making all processes wait for the leading
-    process.
+    """
+    Context manager ensuring ordered operations in distributed training by making all processes wait for the leadingprocess.
+    上下文管理器通过让所有进程等待领导进程，确保分布式培训中的有序运行。
     """
     if local_rank not in [-1, 0]:
         dist.barrier(device_ids=[local_rank])

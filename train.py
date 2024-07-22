@@ -165,9 +165,15 @@ def train(hyp, opt, device, callbacks):
     # Loggers   加载相关日志功能:如tensorboard,logger,wandb
     # 设置wandb和tb两种日志, wandb和tensorboard都是模型信息，指标可视化工具
     data_dict = None
-    if RANK in {-1, 0}:
+    if RANK in {-1, 0}:   # 如果进程编号为-1或0
         include_loggers = list(LOGGERS)
+        '''
+        LOGGERS 是一个包含默认日志记录器的列表。include_loggers 是 LOGGERS 的副本，后续可以添加其他日志记录器。
+        getattr 函数用于获取 opt 对象的 ndjson_console 属性。如果 opt 对象没有这个属性，则返回 False。
+        如果 ndjson_console 属性存在且为 True，则将 "ndjson_console" 添加到 include_loggers 列表。
+        '''
         if getattr(opt, "ndjson_console", False):
+            # 将 "ndjson_console" 添加到 include_loggers 列表中
             include_loggers.append("ndjson_console")
         if getattr(opt, "ndjson_file", False):
             include_loggers.append("ndjson_file")
@@ -189,6 +195,10 @@ def train(hyp, opt, device, callbacks):
 
         # Process custom dataset artifact link
         # 定义数据集字典
+        # 当访问 loggers.remote_dataset 时，该属性方法会依次检查 loggers 对象中的 clearml、wandb 和 comet_logger 属性
+        # 并尝试从中获取 data_dict。这意味着 data_dict 将被设置为其中一个日志服务中的数据集字典。
+        # 在之前定义的 loggers 对象中，有一个 remote_dataset 属性方法。
+        # 该方法的作用是从远程日志服务（如 ClearML、Weights & Biases 或 Comet ML）获取数据集字典。
         data_dict = loggers.remote_dataset
         if resume:  # If resuming runs from remote artifact
             weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
@@ -200,8 +210,8 @@ def train(hyp, opt, device, callbacks):
     # 设置随机种子
     init_seeds(opt.seed + 1 + RANK, deterministic=True)
     # 加载数据配置信息
-    with torch_distributed_zero_first(LOCAL_RANK):
-        data_dict = data_dict or check_dataset(data)  # check if None
+    with torch_distributed_zero_first(LOCAL_RANK):   # 同步所有进程
+        data_dict = data_dict or check_dataset(data)  # check if None 检查数据集，如果没找到数据集则下载数据集(仅适用于项目中自带的yaml文件数据集)
     # 获取训练集、测试集图片路径
     train_path, val_path = data_dict["train"], data_dict["val"]
     # nc：数据集有多少种类别
@@ -400,9 +410,13 @@ def train(hyp, opt, device, callbacks):
 
     # Model attributes   根据自己数据集的类别数和网络FPN层数设置各个损失的系数
     nl = de_parallel(model).model[-1].nl  # number of detection layers (to scale hyps)
+    # box为预测框的损失
     hyp["box"] *= 3 / nl  # scale to layers
+    # cls为分类的损失
     hyp["cls"] *= nc / 80 * 3 / nl  # scale to classes and layers
+    # obj为置信度损失
     hyp["obj"] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
+    # 标签平滑
     hyp["label_smoothing"] = opt.label_smoothing
     model.nc = nc  # attach number of classes to model
     model.hyp = hyp  # attach hyperparameters to model
